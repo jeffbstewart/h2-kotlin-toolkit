@@ -58,6 +58,20 @@ class H2Database(private val config: H2Config) {
         val basePath = config.basePath
         log.info("Initializing H2 database at {}", basePath)
 
+        // Clean up stale plaintext export from a crashed encryption migration
+        val staleExport = File("${basePath}-export.sql")
+        if (staleExport.exists()) {
+            log.warn("Deleting stale plaintext export from interrupted encryption migration: {}", staleExport.name)
+            staleExport.delete()
+        }
+
+        // Warn if pre-encryption backup still exists (plaintext, should be deleted by operator)
+        val preEncryptionBackup = File("${basePath}.mv.db.pre-encryption")
+        if (preEncryptionBackup.exists()) {
+            log.warn("Unencrypted pre-migration backup still on disk: {}. Delete it after verifying the encrypted database works.",
+                preEncryptionBackup.absolutePath)
+        }
+
         // Check for restore sentinel before any DB operations
         val restoreSentinel = File("${File(basePath).parent}/restore.sql")
         if (restoreSentinel.exists()) {
@@ -109,6 +123,13 @@ class H2Database(private val config: H2Config) {
             SchemaUpdaterRunner.runAll(ds)
         }
     }
+
+    /**
+     * Creates a correctly-configured [H2Backup] using this database's connection pool
+     * and file password. Ensures encrypted databases produce encrypted backups.
+     */
+    fun createBackup(backupDir: File, dailySlots: Int = 6, weeklySlots: Int = 4): H2Backup =
+        H2Backup(dataSource, backupDir, config.filePassword, dailySlots, weeklySlots)
 
     /** Closes the connection pool. */
     fun destroy() {

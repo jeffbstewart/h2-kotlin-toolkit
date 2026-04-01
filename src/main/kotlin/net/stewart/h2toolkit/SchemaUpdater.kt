@@ -38,6 +38,9 @@ object SchemaUpdaterRunner {
 
     fun hasUpdaters(): Boolean = updaters.isNotEmpty()
 
+    /** Clears all registered updaters. Primarily for testing. */
+    fun clear() { updaters.clear() }
+
     fun runAll(dataSource: DataSource) {
         if (updaters.isEmpty()) return
         log.info("Running {} schema updater(s)", updaters.size)

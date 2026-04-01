@@ -25,4 +25,8 @@ data class H2Config(
     val leakDetectionThresholdMs: Long = 10000,
     val metricsRegistry: Any? = null,
     val flywayLocations: List<String> = listOf("classpath:db/migration"),
-)
+) {
+    /** Redacts passwords to prevent accidental logging of credentials. */
+    override fun toString(): String =
+        "H2Config(basePath=$basePath, poolName=$poolName, maxPoolSize=$maxPoolSize)"
+}

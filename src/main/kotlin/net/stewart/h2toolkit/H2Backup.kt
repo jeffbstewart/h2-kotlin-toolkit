@@ -77,5 +77,11 @@ class H2Backup(
             }
             conn.createStatement().use { stmt -> stmt.execute(sql) }
         }
+
+        // Restrict file permissions to owner-only (best-effort, platform-dependent)
+        file.setReadable(false, false)
+        file.setReadable(true, true)
+        file.setWritable(false, false)
+        file.setWritable(true, true)
     }
 }

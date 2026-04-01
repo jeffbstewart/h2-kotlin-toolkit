@@ -50,6 +50,7 @@ class H2DatabaseTest {
         val basePath = File(tempDir, "testdb").absolutePath
 
         try {
+            SchemaUpdaterRunner.clear()
             var ran = false
             SchemaUpdaterRunner.register(object : SchemaUpdater {
                 override val name = "test_updater"
