@@ -105,17 +105,33 @@ class H2Database(private val config: H2Config) {
 
         log.info("HikariCP pool '{}' created (max {})", config.poolName, config.maxPoolSize)
 
-        // Run Flyway migrations — toolkit's internal + consumer's
-        val flywayBuilder = Flyway.configure().dataSource(ds)
+        // Toolkit-internal migrations run in their own history table so
+        // their version numbers can never collide with the consumer's
+        // (a consumer V001 previously conflicted with the toolkit's
+        // V001). The internal SQL is idempotent, so databases created
+        // before this split migrate cleanly into the new history table.
+        Flyway.configure()
+            .dataSource(ds)
+            .locations("classpath:db/h2toolkit")
+            .table("flyway_schema_history_h2toolkit")
+            .baselineOnMigrate(true)
+            .baselineVersion("0")
+            .load()
+            .migrate()
 
-        val locations = mutableListOf<String>()
-        // Toolkit's own migration (schema_updater table)
-        locations.add("classpath:db/h2toolkit")
-        // Consumer's migrations
-        locations.addAll(config.flywayLocations)
-
-        flywayBuilder.locations(*locations.toTypedArray())
-        flywayBuilder.load().migrate()
+        // Consumer's migrations. Baseline at 0 because phase 1 already
+        // made the schema non-empty on a fresh database; version 0 skips
+        // nothing. Pre-split databases carry the toolkit's V001 entry in
+        // this history table; ignore that orphan instead of failing
+        // validation.
+        Flyway.configure()
+            .dataSource(ds)
+            .locations(*config.flywayLocations.toTypedArray())
+            .baselineOnMigrate(true)
+            .baselineVersion("0")
+            .ignoreMigrationPatterns("*:missing")
+            .load()
+            .migrate()
         log.info("Flyway migrations applied")
 
         // Run schema updaters

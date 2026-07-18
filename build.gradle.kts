@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "2.3.10"
     `java-library`
+    `java-test-fixtures`
     `maven-publish`
 }
 
@@ -20,7 +21,12 @@ dependencies {
     // JDBI for schema updater tracking (lightweight, no ORM opinion)
     implementation("org.jdbi:jdbi3-core:3.49.4")
 
+    // JUnit 5 lifecycle interfaces for the H2TestDatabaseExtension shipped
+    // in test fixtures (consumers get it via testFixtures(...)).
+    testFixturesApi("org.junit.jupiter:junit-jupiter-api:5.11.4")
+
     testImplementation(kotlin("test"))
+    testImplementation(testFixtures(project))
     testImplementation("org.slf4j:slf4j-simple:2.0.17")
 }
 
