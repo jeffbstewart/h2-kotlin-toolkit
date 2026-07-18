@@ -176,6 +176,40 @@ To restore from a backup:
 
 For encrypted databases, the backup must be a `CIPHER AES` backup created with the same `filePassword`.
 
+## Testing (test fixtures)
+
+The published test-fixtures artifact provides an in-memory database
+running the same Flyway migrations as production:
+
+```kotlin
+// build.gradle.kts
+testImplementation(testFixtures("net.stewart:h2-kotlin-toolkit:0.1.0"))
+```
+
+```kotlin
+class AccountDaoTest {
+    companion object {
+        @JvmField
+        @RegisterExtension
+        val db = H2TestDatabaseExtension()   // classpath:db/migration by default
+    }
+
+    @Test
+    fun `stores and loads`() {
+        val ds = db.dataSource
+        // ...
+    }
+}
+```
+
+Each `H2TestDatabase`/extension instance gets a unique in-memory
+database, so parallel test classes are isolated. ORM wiring stays with
+the consumer (e.g. `JdbiOrm.setDataSource(db.dataSource)`).
+
+Note on migrations: toolkit-internal migrations run in their own
+Flyway history table (`flyway_schema_history_h2toolkit`), so consumer
+migration versions may freely start at `V001`.
+
 ## Requirements
 
 - JDK 21+
