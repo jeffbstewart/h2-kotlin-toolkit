@@ -20,8 +20,7 @@ src/
 │   └── kotlin/
 │       └── net/stewart/h2toolkit/
 │           ├── H2DatabaseTest.kt      # Database tests
-│           ├── H2EncryptionTest.kt    # Encryption tests
-│           └── H2BackupTest.kt        # Backup tests
+│           └── H2TestDatabaseTest.kt  # Test-fixture tests
 └── testFixtures/
     └── kotlin/
         └── net/stewart/h2toolkit/
@@ -69,11 +68,11 @@ Tests for core functionality include:
 
 ## Release Process
 
-1. Create a new branch using `start_work` 
+1. Create a new branch off `main`
 2. Make your changes
-3. Commit with `checkpoint`
-4. Push with `publish`
-5. Propose a pull request using `propose`
+3. Commit them
+4. Push the branch
+5. Open a pull request for review
 
 ## Contribution Guidelines
 
