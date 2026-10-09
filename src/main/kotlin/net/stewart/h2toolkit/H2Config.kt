@@ -13,6 +13,10 @@ package net.stewart.h2toolkit
  * @param leakDetectionThresholdMs HikariCP leak detection threshold in milliseconds (0 = disabled)
  * @param metricsRegistry Optional metrics registry for HikariCP pool stats (e.g., Micrometer)
  * @param flywayLocations Flyway migration locations (default: classpath:db/migration)
+ * @param retainPreEncryptionBackup Keep the unencrypted `.mv.db.pre-encryption` copy made
+ *   when migrating to encryption. Off by default: the plaintext copy is overwritten and
+ *   deleted once the encrypted database has been verified, and any leftover copy from an
+ *   earlier migration is removed on startup. Enable only if you will delete it yourself.
  */
 data class H2Config(
     val basePath: String,
@@ -25,6 +29,7 @@ data class H2Config(
     val leakDetectionThresholdMs: Long = 10000,
     val metricsRegistry: Any? = null,
     val flywayLocations: List<String> = listOf("classpath:db/migration"),
+    val retainPreEncryptionBackup: Boolean = false,
 ) {
     /** Redacts passwords to prevent accidental logging of credentials. */
     override fun toString(): String =

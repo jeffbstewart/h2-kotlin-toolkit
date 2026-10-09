@@ -20,6 +20,7 @@ src/
 │   └── kotlin/
 │       └── net/stewart/h2toolkit/
 │           ├── H2DatabaseTest.kt      # Database tests
+│           ├── H2EncryptionTest.kt    # Encryption migration tests
 │           └── H2TestDatabaseTest.kt  # Test-fixture tests
 └── testFixtures/
     └── kotlin/
