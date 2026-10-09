@@ -62,14 +62,7 @@ class H2Database(private val config: H2Config) {
         val staleExport = File("${basePath}-export.sql")
         if (staleExport.exists()) {
             log.warn("Deleting stale plaintext export from interrupted encryption migration: {}", staleExport.name)
-            staleExport.delete()
-        }
-
-        // Warn if pre-encryption backup still exists (plaintext, should be deleted by operator)
-        val preEncryptionBackup = File("${basePath}.mv.db.pre-encryption")
-        if (preEncryptionBackup.exists()) {
-            log.warn("Unencrypted pre-migration backup still on disk: {}. Delete it after verifying the encrypted database works.",
-                preEncryptionBackup.absolutePath)
+            H2Encryption.secureDelete(staleExport)
         }
 
         // Check for restore sentinel before any DB operations
@@ -80,7 +73,21 @@ class H2Database(private val config: H2Config) {
 
         // If DB exists unencrypted, migrate it to encrypted format
         if (File("${basePath}.mv.db").exists()) {
-            H2Encryption.migrateToEncrypted(basePath, config.password, config.priorPassword, config.filePassword)
+            H2Encryption.migrateToEncrypted(basePath, config.password, config.priorPassword, config.filePassword,
+                retainPlaintextBackup = config.retainPreEncryptionBackup)
+        }
+
+        // A plaintext pre-encryption copy left by an earlier migration. Once the encrypted
+        // database exists (verified above), remove it unless retention is explicitly enabled.
+        val preEncryptionBackup = File("${basePath}.mv.db.pre-encryption")
+        if (preEncryptionBackup.exists()) {
+            if (config.retainPreEncryptionBackup || !File("${basePath}.mv.db").exists()) {
+                log.warn("Unencrypted pre-migration backup on disk: {}. Delete it once no longer needed.",
+                    preEncryptionBackup.absolutePath)
+            } else {
+                log.warn("Removing leftover unencrypted pre-migration backup: {}", preEncryptionBackup.name)
+                H2Encryption.secureDelete(preEncryptionBackup)
+            }
         }
 
         val dbUrl = jdbcUrl

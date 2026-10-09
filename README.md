@@ -143,6 +143,7 @@ backup.runBackup()
 | `leakDetectionThresholdMs` | `10000` | Leak warning threshold (0 = off) |
 | `metricsRegistry` | `null` | Micrometer registry for pool metrics |
 | `flywayLocations` | `["classpath:db/migration"]` | Flyway migration scan paths |
+| `retainPreEncryptionBackup` | `false` | Keep the unencrypted `.mv.db.pre-encryption` copy after encryption migration (you must delete it yourself) |
 
 ## Password Rotation
 
@@ -160,11 +161,13 @@ The toolkit connects with the prior password, runs `ALTER USER sa SET PASSWORD`,
 On first startup with `filePassword` set, if the database file exists but is unencrypted, the toolkit automatically:
 
 1. Exports the database to a SQL script
-2. Backs up the original file (`.mv.db.pre-encryption`)
-3. Creates a new AES-encrypted database and imports the data
-4. Deletes the plaintext export
+2. Moves the original file aside (`.mv.db.pre-encryption`)
+3. Creates a new AES-encrypted database, imports the data, and verifies table row counts match
+4. Overwrites and deletes the plaintext export and the `.pre-encryption` copy (the copy is kept only with `retainPreEncryptionBackup = true`; a leftover copy from an earlier migration is removed on the next startup otherwise)
 
-If any step fails, the original database is restored automatically.
+Overwrite-before-delete is best effort: copy-on-write filesystems, SSD wear leveling, and snapshots can keep earlier copies of the plaintext data.
+
+If import or verification fails, the original database is restored automatically.
 
 ## Backup Restore
 

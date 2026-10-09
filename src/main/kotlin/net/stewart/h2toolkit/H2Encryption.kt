@@ -2,6 +2,8 @@ package net.stewart.h2toolkit
 
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.io.RandomAccessFile
+import java.sql.Connection
 import java.sql.DriverManager
 
 /**
@@ -51,14 +53,22 @@ object H2Encryption {
      *
      * Steps:
      * 1. Connect to unencrypted DB (tries target password, then prior)
-     * 2. Export via SCRIPT TO
-     * 3. Back up original .mv.db to .mv.db.pre-encryption
+     * 2. Export via SCRIPT TO and record per-table row counts
+     * 3. Move original .mv.db aside to .mv.db.pre-encryption
      * 4. Create encrypted DB and import via RUNSCRIPT FROM
-     * 5. Delete plaintext export
+     * 5. Verify the encrypted DB holds the same tables and row counts
+     * 6. Remove the plaintext export and (unless [retainPlaintextBackup]) the
+     *    plaintext .pre-encryption copy, overwriting both before deletion
      *
-     * Rolls back automatically if import fails.
+     * Rolls back automatically if import or verification fails.
      */
-    fun migrateToEncrypted(basePath: String, password: String, priorPassword: String, filePassword: String) {
+    fun migrateToEncrypted(
+        basePath: String,
+        password: String,
+        priorPassword: String,
+        filePassword: String,
+        retainPlaintextBackup: Boolean = false,
+    ) {
         val dbFile = File("${basePath}.mv.db")
         val encryptedUrl = "jdbc:h2:file:$basePath;CIPHER=AES"
         val compoundPassword = "$filePassword $password"
@@ -78,29 +88,38 @@ object H2Encryption {
         val unencryptedUrl = "jdbc:h2:file:$basePath"
         val workingPassword = resolveWorkingPassword(unencryptedUrl, password, priorPassword)
             ?: throw RuntimeException("Cannot connect to unencrypted database — fix credentials before enabling encryption")
-        log.info("Step 1/5: Connected to unencrypted database")
+        log.info("Step 1/6: Connected to unencrypted database")
 
         // Step 2: Export
         val scriptFile = File("${basePath}-export.sql")
-        try {
+        val sourceCounts: Map<String, Long> = try {
             DriverManager.getConnection(unencryptedUrl, "sa", workingPassword).use { conn ->
+                val counts = tableRowCounts(conn)
                 val escaped = scriptFile.absolutePath.replace("'", "''")
                 conn.createStatement().execute("SCRIPT TO '$escaped'")
-            }
-            log.info("Step 2/5: Exported database ({} bytes)", scriptFile.length())
+                counts
+            }.also { log.info("Step 2/6: Exported database ({} bytes, {} tables)", scriptFile.length(), it.size) }
         } catch (e: Exception) {
-            scriptFile.delete()
+            secureDelete(scriptFile)
             throw RuntimeException("Failed to export database for encryption migration", e)
         }
 
-        // Step 3: Back up original
+        // Step 3: Move original aside
         val backupFile = File("${basePath}.mv.db.pre-encryption")
-        if (backupFile.exists()) backupFile.delete()
+        if (backupFile.exists()) secureDelete(backupFile)
         if (!dbFile.renameTo(backupFile)) {
-            scriptFile.delete()
+            secureDelete(scriptFile)
             throw RuntimeException("Failed to rename ${dbFile.name} for backup")
         }
-        log.info("Step 3/5: Backed up to {}", backupFile.name)
+        log.info("Step 3/6: Moved original aside to {}", backupFile.name)
+
+        fun rollback(message: String, cause: Exception): Nothing {
+            val newDbFile = File("${basePath}.mv.db")
+            if (newDbFile.exists()) newDbFile.delete()
+            backupFile.renameTo(dbFile)
+            secureDelete(scriptFile)
+            throw RuntimeException(message, cause)
+        }
 
         // Step 4: Create encrypted DB and import
         try {
@@ -108,20 +127,80 @@ object H2Encryption {
                 val escaped = scriptFile.absolutePath.replace("'", "''")
                 conn.createStatement().execute("RUNSCRIPT FROM '$escaped'")
             }
-            log.info("Step 4/5: Imported into encrypted database")
+            log.info("Step 4/6: Imported into encrypted database")
         } catch (e: Exception) {
-            // Rollback
-            val newDbFile = File("${basePath}.mv.db")
-            if (newDbFile.exists()) newDbFile.delete()
-            backupFile.renameTo(dbFile)
-            scriptFile.delete()
-            throw RuntimeException("Encryption migration failed — original database restored", e)
+            rollback("Encryption migration failed — original database restored", e)
         }
 
-        // Step 5: Clean up
-        scriptFile.delete()
-        log.info("Step 5/5: Deleted plaintext export")
+        // Step 5: Verify the encrypted copy against the source
+        try {
+            val encryptedCounts = DriverManager.getConnection(encryptedUrl, "sa", compoundPassword).use { conn ->
+                tableRowCounts(conn)
+            }
+            check(encryptedCounts == sourceCounts) {
+                "Encrypted database does not match source (tables/row counts differ)"
+            }
+            log.info("Step 5/6: Verified encrypted database ({} tables)", encryptedCounts.size)
+        } catch (e: Exception) {
+            rollback("Encryption migration verification failed — original database restored", e)
+        }
+
+        // Step 6: Remove plaintext copies
+        secureDelete(scriptFile)
+        if (retainPlaintextBackup) {
+            log.warn("Step 6/6: Deleted plaintext export; RETAINED unencrypted backup {} (retainPreEncryptionBackup=true) — delete it once no longer needed",
+                backupFile.absolutePath)
+        } else {
+            secureDelete(backupFile)
+            log.info("Step 6/6: Deleted plaintext export and unencrypted backup")
+        }
         log.info("=== ENCRYPTION MIGRATION COMPLETE ===")
+    }
+
+    /**
+     * Best-effort secure removal: overwrites the file's contents with zeros, syncs, then
+     * deletes it. On copy-on-write filesystems, SSDs with wear leveling, or where
+     * snapshots exist, earlier copies of the data may survive; full-disk encryption is
+     * the only complete protection there.
+     */
+    fun secureDelete(file: File) {
+        if (!file.exists()) return
+        try {
+            RandomAccessFile(file, "rw").use { raf ->
+                val zeros = ByteArray(64 * 1024)
+                var remaining = raf.length()
+                raf.seek(0)
+                while (remaining > 0) {
+                    val n = minOf(remaining, zeros.size.toLong()).toInt()
+                    raf.write(zeros, 0, n)
+                    remaining -= n
+                }
+                raf.fd.sync()
+            }
+        } catch (e: Exception) {
+            log.warn("Could not overwrite {} before deletion: {}", file.name, e.message)
+        }
+        if (!file.delete() && file.exists()) {
+            log.error("Failed to delete plaintext file {} — remove it manually", file.absolutePath)
+        }
+    }
+
+    /** Row count per user table (schema-qualified), for verifying an export/import round trip. */
+    private fun tableRowCounts(conn: Connection): Map<String, Long> {
+        val tables = mutableListOf<String>()
+        conn.createStatement().use { st ->
+            st.executeQuery(
+                """SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+                   WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA <> 'INFORMATION_SCHEMA'"""
+            ).use { rs ->
+                while (rs.next()) tables.add("\"${rs.getString(1).replace("\"", "\"\"")}\".\"${rs.getString(2).replace("\"", "\"\"")}\"")
+            }
+        }
+        return tables.associateWith { qualified ->
+            conn.createStatement().use { st ->
+                st.executeQuery("SELECT COUNT(*) FROM $qualified").use { rs -> rs.next(); rs.getLong(1) }
+            }
+        }
     }
 
     /**
